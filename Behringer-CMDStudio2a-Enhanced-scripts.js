@@ -27,10 +27,44 @@ function BehringerCMDStudio2a() {}
 controller.editModes = { red: 0, blue: 1, blink: 2, disabled: -1 };
 
 // ***************************** Preferences ***********************
+controller.effectState = {
+    deck1: {
+        knobMode: null,
+        lastPress: {1: 0, 2: 0, 3: 0, 4: 0},
+        buttonStates: {}, 
+        originalValues: {
+            effect1: 0.5,
+            effect2: 0.5,
+            effect3: 0.5,
+            mix: 0.5
+        }
+    },
+    deck2: {
+        knobMode: null,
+        lastPress: {1: 0, 2: 0, 3: 0, 4: 0},
+        buttonStates: {},  
+        originalValues: {
+            effect1: 0.5,
+            effect2: 0.5,
+            effect3: 0.5,
+            mix: 0.5
+        }
+    }
+};
+controller.doublePressTime = 300; // milliseconds
 
 // Edit preferences in the Behringer-CMDStudio2a-Enhanced-preferences.js file, not here.
 // This just sets defaults to be used when someone copies in their old preferences file.
+var quickEffectValues = {
+    1: 0.5,
+    2: 0.5
+};
 
+// Add state tracking for limits
+var atLimit = {
+    1: false,
+    2: false
+};
 var BehringerCMDStudio2aPreferenceDefaults = {
     // Set to true to turn the MODE shift button into one that's only active while held.
     // Set as false for layer cycle behaviour of press to cycle between [OFF, ON-ONCE, LOCKED-ON]
@@ -100,6 +134,7 @@ controller.editModes.loop       = controller.editModes[controller.preferences.ed
 controller.editModes.introoutro = controller.editModes[controller.preferences.editModes.introoutro || 'blink'];
 
 // ***************************** Global Vars **********************************
+// States for Vinyl Mode Changes
 
 // Vinyl button, ON -> scratch mode
 controller.vinylButton = false;
@@ -444,6 +479,7 @@ controller.vinylButtonPush = function (channel, control, value, status, group) {
         } else {
             this.vinylButton = !this.vinylButton; //opposite states
             this.updateVinylLED();
+            print("Vinyl mode: " + (this.vinylButton ? "ON" : "OFF")); // Debug line
         }
     }
 }
@@ -518,10 +554,33 @@ controller.fileButtonPush = function (channel, control, value, status, group) {
     }
 }
 
+controller.getHeldEffectButton = function(deck) {
+    var state = this.effectState["deck" + deck];
+    if (!state || !state.buttonStates) return null;
 
+    // Check buttons 1-3
+    for (var i = 1; i <= 3; i++) {
+        if (state.buttonStates[i] && state.buttonStates[i].pressStart > 0) {
+            return i;
+        }
+    }
+    return null;
+};
 
 // Up button behaviour (folder/file depending)
 controller.upButtonPush = function (channel, control, value, status, group) {
+    if (this.vinylButton) {
+        // Check both decks for held effect buttons
+        for (var deck = 1; deck <= 2; deck++) {
+            var heldButton = this.getHeldEffectButton(deck);
+            if (heldButton !== null && value === this.values.press) {
+                var effectGroup = "[EffectRack1_EffectUnit" + deck + "_Effect" + heldButton + "]";
+                engine.setValue(effectGroup, "prev_effect", 1);
+                return;
+            }
+        }
+    }
+
     if (controller.folderButton) { // Folder mode
         // Act as though mode lock is ON for convenience
         if (!this.modeShift) { // Mode shift is OFF
@@ -547,6 +606,18 @@ controller.upButtonPush = function (channel, control, value, status, group) {
 
 // Down button behaviour (folder/file depending)
 controller.downButtonPush = function (channel, control, value, status, group) {
+    if (this.vinylButton) {
+        // Check both decks for held effect buttons
+        for (var deck = 1; deck <= 2; deck++) {
+            var heldButton = this.getHeldEffectButton(deck);
+            if (heldButton !== null && value === this.values.press) {
+                var effectGroup = "[EffectRack1_EffectUnit" + deck + "_Effect" + heldButton + "]";
+                engine.setValue(effectGroup, "next_effect", 1);
+                return;
+            }
+        }
+    }
+
     if (controller.folderButton) { // Folder mode
         // Act as though mode lock is ON for convenience
         if (!this.modeShift) { // Mode shift is OFF
@@ -569,12 +640,18 @@ controller.downButtonPush = function (channel, control, value, status, group) {
 }
 
 
-
 // Speed/Loop controls
 // Minus buttons
 controller.minusButtonPush = function (channel, control, value, status, group) {
     var deck = script.deckFromGroup(group);
 
+    if (this.vinylButton && value === this.values.press) {
+        var quickEffectGroup = "[QuickEffectRack1_[Channel" + deck + "]]";
+        engine.setValue(quickEffectGroup, "prev_chain", 1);
+        return;
+    }
+
+    // Original minus button logic here...
     controller.minusPlusPushed[deck - 1].minus = (value === this.values.press);
 
     if (!this.modeShifted()) {
@@ -618,6 +695,14 @@ controller.minusButtonPush = function (channel, control, value, status, group) {
 // Plus buttons
 controller.plusButtonPush = function (channel, control, value, status, group) {
     var deck = script.deckFromGroup(group);
+
+    if (this.vinylButton && value === this.values.press) {
+        var quickEffectGroup = "[QuickEffectRack1_[Channel" + deck + "]]";
+        engine.setValue(quickEffectGroup, "next_chain", 1);
+        return;
+    }
+
+    // Original plus button logic here...
 
     controller.minusPlusPushed[deck - 1].plus = (value === this.values.press);
 
@@ -722,17 +807,94 @@ controller.hotCueButtons = function (channel, control, value, status, group) {
 
 
 // Sample buttons. Depending on edit mode: Used to control samples or the intro/outro markers.
+
+
 controller.sampleButtons = function (channel, control, value, status, group) {
-    // Cant use deckFromGroup as these are all bound to the sampler decks instead.
     var deck = control <= this.controls.leftSampler4 ? 1 : 2;
     var deckName = this.deckNames[deck - 1];
     var button = control - this.controls[deckName + 'Sampler1'] + 1;
     if (button > 2) button--; // Buttons 2-3 have a gap between.
 
+    print("Sample button pressed: Deck " + deck + ", Button " + button);
+    print("Vinyl mode is: " + (this.vinylButton ? "ON" : "OFF"));
+
+    if (this.vinylButton) {
+        print("Entering vinyl mode effects control");
+        var fxUnit = deck;
+        var fxGroup = "[EffectRack1_EffectUnit" + fxUnit + "_Effect" + button + "]";
+        var now = new Date().getTime();
+        var state = this.effectState["deck" + deck];
+
+        // Initialize button-specific states if they don't exist
+        if (!state.buttonStates) {
+            state.buttonStates = {};
+        }
+        if (!state.buttonStates[button]) {
+            state.buttonStates[button] = {
+                pressStart: 0,
+                lastPress: 0
+            };
+        }
+
+        if (value === this.values.press) {
+            if (button <= 3) {
+                print("Effect button " + button + " pressed, group: " + fxGroup);
+
+                if (now - state.buttonStates[button].lastPress < this.doublePressTime) {
+                    print("Double press detected - resetting meta");
+                    engine.setValue(fxGroup, "meta", 0);
+                } else {
+                    // Set up for potential knob control
+                    state.originalValues["effect" + button] = engine.getValue(fxGroup, "meta");
+                    state.knobMode = "effect" + button;
+
+                    // Start timing for held detection
+                    state.buttonStates[button].pressStart = now;
+                }
+                state.buttonStates[button].lastPress = now;
+
+            } else if (button === 4) {
+                if (this.modeShifted()) {
+                    print("Mode shifted - resetting Quick Effect type");
+                    var quickEffectGroup = "[QuickEffectRack1_[Channel" + deck + "]]";
+                    engine.setValue(quickEffectGroup, "loaded_chain_preset", 11);
+                    engine.setValue(quickEffectGroup, "clear", 1);
+                    print("Attempting to reset QuickEffect to default");
+                } else {
+                    var mixGroup = "[EffectRack1_EffectUnit" + fxUnit + "]";
+                    if (now - state.buttonStates[button].lastPress < this.doublePressTime) {
+                        print("Double press detected - resetting mix");
+                        engine.setValue(mixGroup, "mix", 1);
+                    } else {
+                        print("Single press - storing mix value");
+                        state.originalValues.mix = engine.getValue(mixGroup, "mix");
+                        state.knobMode = "mix";
+                    }
+                }
+                state.buttonStates[button].lastPress = now;
+            }
+        } else {
+            // Button released
+            if (button <= 3) {
+                var holdTime = now - state.buttonStates[button].pressStart;
+                if (holdTime < 500) { // 500ms threshold for toggle
+                    // Toggle the effect only if it wasn't held for knob control
+                    print("Quick press detected - toggling effect");
+                    var currentState = engine.getValue(fxGroup, "enabled");
+                    engine.setValue(fxGroup, "enabled", currentState ? 0 : 1);
+                }
+            }
+            if (state.knobMode === "effect" + button || state.knobMode === "mix") {
+                state.knobMode = null;
+            }
+            state.buttonStates[button].pressStart = 0;
+        }
+        return;
+    }
+    // ORIGINAL CODE STARTS HERE - Only runs if NOT in vinyl mode
     if (value === this.values.press) { // Button pushed
         if (this.editMode[deck - 1] === this.editModes.sample) {
             // Edit mode SAMPLE: play samples
-
             if (!this.modeShifted()) {
                 engine.setValue(group, "start_play", 1); // If not mode shift, play from start.
             } else {
@@ -813,10 +975,13 @@ controller.wheelTouch = function (channel, control, value, status, group) {
 controller.wheelTurn = function (channel, control, value, status, group) {
     var deck = script.deckFromGroup(group);
     var newValue = value-64;
+
     if (engine.isScratching(deck)) {
         newValue *= this.preferences.scratchSensitivity[this.modeShift ? 1 : 0];
         engine.scratchTick(deck, newValue);  // Scratch!
     } else {
+        // Apply sensitivity multiplier only in CD mode when MODE is pressed
+        newValue *= this.preferences.scratchSensitivity[this.modeShift ? 1 : 0];
         engine.setValue(group, "jog", newValue); // Jog.
     }
 }
@@ -833,15 +998,73 @@ controller.rateChanged = function (value, group, control) {
 
 controller.pitchTurn = function (channel, control, value, status, group) {
     var deck = script.deckFromGroup(group);
-    var newValue = value-64;
+    var newValue = value - 64;
 
-    if (newValue > 0) {
-        engine.setValue(group, "rate_perm_up" + (this.modeShift ? "_small" : ""), newValue);
-    } else if (newValue < 0) {
-        engine.setValue(group, "rate_perm_down" + (this.modeShift ? "_small" : ""), -newValue);
+    print("Pitch turn: Deck " + deck + ", Vinyl mode: " + (this.vinylButton ? "ON" : "OFF"));
+
+    if (this.vinylButton) {
+        print("Entering vinyl mode pitch control");
+        var state = this.effectState["deck" + deck];
+        if (state.knobMode) {
+            print("Knob mode: " + state.knobMode);
+            var fxUnit = deck;
+            var adjustmentStep = 0.02;
+
+            if (state.knobMode === 'mix') {
+                var mixGroup = "[EffectRack1_EffectUnit" + fxUnit + "]";
+                var currentMix = engine.getValue(mixGroup, "mix");
+                var newMix = Math.max(0, Math.min(1, currentMix + (newValue * adjustmentStep)));
+                engine.setValue(mixGroup, "mix", newMix);
+                print("Setting mix to: " + newMix);
+            } else {
+                var effectNum = state.knobMode.charAt(state.knobMode.length - 1);
+                var effectGroup = "[EffectRack1_EffectUnit" + fxUnit + "_Effect" + effectNum + "]";
+                var currentMeta = engine.getValue(effectGroup, "meta");
+                var newMeta = Math.max(0, Math.min(1, currentMeta + (newValue * adjustmentStep)));
+                engine.setValue(effectGroup, "meta", newMeta);
+                print("Setting meta for effect " + effectNum + " to: " + newMeta);
+            }
+            return;
+        }
+    }
+
+    // Original pitch knob logic here...
+    if (this.modeShifted()) {
+        var currentValue = quickEffectValues[deck];
+
+        // If we hit a limit and trying to go further in that direction, ignore
+        if ((currentValue >= 1 && newValue > 0) || (currentValue <= 0 && newValue < 0)) {
+            atLimit[deck] = true;
+            // Force the value to exactly 0 or 1 to prevent floating point issues
+            quickEffectValues[deck] = (newValue > 0) ? 1 : 0;
+            return;
+        }
+
+        // If we were at a limit but now going the other direction, allow movement again
+        if (atLimit[deck] && 
+            ((currentValue >= 1 && newValue < 0) || (currentValue <= 0 && newValue > 0))) {
+            atLimit[deck] = false;
+        }
+
+        // If not at limit, adjust value
+        if (!atLimit[deck]) {
+            var adjustmentStep = 0.02;
+            var proposedValue = currentValue + (newValue * adjustmentStep);
+            proposedValue = Math.max(0, Math.min(1, proposedValue));
+
+            quickEffectValues[deck] = proposedValue;
+            var quickEffectGroup = "[QuickEffectRack1_[Channel" + deck + "]]";
+            engine.setValue(quickEffectGroup, "super1", proposedValue);
+            print("Quick Effect value for deck " + deck + ": " + proposedValue);
+        }
+    } else {
+        if (newValue > 0) {
+            engine.setValue(group, "rate_perm_up", newValue / 64);
+        } else if (newValue < 0) {
+            engine.setValue(group, "rate_perm_down", -newValue / 64);
+        }
     }
 }
-
 controller.syncButtonPush = function (channel, control, value, status, group) {
     var deck = script.deckFromGroup(group);
     if (status === this.statuses.press) {
