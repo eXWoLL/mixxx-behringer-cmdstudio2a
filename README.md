@@ -1,16 +1,30 @@
-# Behringer CMD Studio 2a controller, version 1.0.0 (Aug 2023)
+# Behringer CMD Studio 2a controller, version 1.1.0 (Aug 2023)
 
 Updated controller mappings for Mixxx for the Behringer CMD Studio 2a controller.
 
 Placeholder repo until I update it for merge to upstream.
 
-## New in 1.0.0 (Aug 2023)
+## New in 1.1.0 (Dec 2024)
 
-* Loop saving controls. (Requires Mixxx 2.4 or greater.)
-* Fader start.
-* Quantize.
-* Master volume/gain on Deck A high fx while mode-shifted.
-* Channel pregain on deck mid fx while mode-shifted.
+- QuickEffects Super Knob (Filter Knob) is controlled via MODE/SHIFT key + Pitch Knob
+- Changed the jog wheel sensitivity x10 increase when the MODE key is pressed to apply to CD-mode as well ( I didn't saw why it wasnt done and seems as useful for moving around :))
+- Modified the VINYL-mode, adding some FX functionality to it (didnt thought of any other button to do this lol) When it is active, the following happens:
+
+The sample buttons (1-4) of the decks (overriding all other instructions for them) control the effects panel (Deck A for the FX1 panel, and Deck B for the FX2 panel) as follows:
+
+a)Sample buttons 1-3 :
+
+    When pressed once: Toggles FX 1-3 ON/OFF
+    While held down: Allows the pitch knob to control the meta knob of each FX (1-3); and the UP/DOWN keys to change the controlled effect
+    If pressed twice: resets the FX knob to the original position
+
+b) Sample Button 4:
+
+    When held down: Allows the pitch knob to control the mix knob of the FX panel
+    When pressed twice: resets the FX mix knob to its default position
+    When pressed while the MODE key is active: Resets the Quick Effect Super knob of the deck to the Default effect (Filter)
+
+c) The pitch blend buttons (+ and -) scroll the selected effect of the QuickEffect Super knob up and down respectively.
 
 # Control scheme
 
